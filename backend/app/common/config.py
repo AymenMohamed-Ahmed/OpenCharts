@@ -9,7 +9,7 @@ keys. tests/test_compose_isolation.py enforces that split.
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import SecretStr, model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 HL_API_URLS = {
@@ -73,6 +73,11 @@ class ExecutionSettings(_Base):
     hl_account_address: str = ""
     hl_agent_private_key: SecretStr | None = None
     live_trading: bool = False
+    # Market orders: IOC this far through the mid. Also the band a caller's
+    # reference_price, or a marketable limit price, must fall within.
+    max_slippage_bps: int = Field(default=300, ge=1, le=5000)
+    # SQLite ledger on the `execdata` volume.
+    ledger_path: str = "/data/ledger.db"
 
     @property
     def hl_api_url(self) -> str:

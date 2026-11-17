@@ -4,13 +4,19 @@ from app.common import config
 
 
 @pytest.fixture(autouse=True)
-def _env(monkeypatch: pytest.MonkeyPatch):
+def _env(monkeypatch: pytest.MonkeyPatch, tmp_path):
     for key in (
         "BROKER",
         "HL_NETWORK",
         "HL_ACCOUNT_ADDRESS",
         "HL_AGENT_PRIVATE_KEY",
         "LIVE_TRADING",
+        "MAX_SLIPPAGE_BPS",
+        "MAX_DAILY_LOSS_USD",
+        "REDIS_URL",
+        "HTTPS_PROXY",
+        "HTTP_PROXY",
+        "ALL_PROXY",
     ):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("API_AUTH_TOKEN", "test-api-token")
@@ -18,6 +24,8 @@ def _env(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("TRADING_ENABLED", "true")
     monkeypatch.setenv("MAX_ORDER_NOTIONAL_USD", "1000")
     monkeypatch.setenv("ALLOWED_SYMBOLS", "")
+    monkeypatch.setenv("ADMIN_TOKEN", "test-admin-token")
+    monkeypatch.setenv("LEDGER_PATH", str(tmp_path / "ledger.db"))
     for cached in (
         config.api_settings,
         config.agent_settings,
