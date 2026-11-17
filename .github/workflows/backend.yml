@@ -1,0 +1,99 @@
+name: Backend
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: backend-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Lint, test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Install dependencies
+        run: uv sync --frozen --python 3.12
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Format
+        run: uv run ruff format --check .
+
+      # Includes test_compose_isolation.py: the network rules in
+      # docker-compose.yml are assertions, so weakening them fails here.
+      - name: Test
+        run: uv run pytest -q
+
+  stack:
+    name: Build images, start stack
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Shellcheck setup.sh
+        run: shellcheck setup.sh
+
+      # Creates .env with generated secrets, validates, builds, starts, and
+      # waits for every healthcheck. Paper broker, trading disabled.
+      - name: Run setup.sh
+        run: ./setup.sh
+
+      - name: Terminal and gateway answer through nginx
+        run: |
+          curl --fail --silent --show-error -o /dev/null http://127.0.0.1:8080/
+          curl --fail --silent --show-error http://127.0.0.1:8080/api/healthz | grep -q '"service":"api"'
+
+      - name: Orders need a token and are refused while trading is disabled
+        run: |
+          body='{"client_order_id":"ci-order-0001","symbol":"BTC","side":"buy","quantity":0.001,"order_type":"market","reference_price":50000}'
+          url=http://127.0.0.1:8080/api/v1/orders
+          token="$(grep '^API_AUTH_TOKEN=' .env | cut -d= -f2)"
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' -d "$body" "$url")" = 401
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' -H "Authorization: Bearer $token" -d "$body" "$url")" = 422
+
+      - name: Execution has no direct route out; the proxy refuses other hosts
+        run: |
+          probe() { docker compose exec -T "$1" python -c "$2"; }
+          probe execution "import socket,sys
+          try: socket.create_connection(('1.1.1.1', 443), 3)
+          except OSError: sys.exit(0)
+          sys.exit('execution reached the internet directly')"
+          probe execution "import httpx,sys
+          try: httpx.get('https://example.com', timeout=8)
+          except httpx.ProxyError: sys.exit(0)
+          sys.exit('proxy let a non-allowlisted host through')"
+          probe agents "import socket,sys
+          try: socket.create_connection(('execution', 8000), 3)
+          except OSError: sys.exit(0)
+          sys.exit('agents reached execution')"
+
+      # Depends on Hyperliquid testnet being up, so it reports but does not fail the run.
+      - name: The proxy lets the allowlisted broker host through
+        continue-on-error: true
+        run: |
+          docker compose exec -T execution python -c "import httpx
+          httpx.post('https://api.hyperliquid-testnet.xyz/info', json={'type': 'meta'}, timeout=15).raise_for_status()"
+
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs --no-color --tail 200

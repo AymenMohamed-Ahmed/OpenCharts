@@ -22,6 +22,9 @@ concurrency:
 jobs:
   build:
     name: Build demo
+    # Pages is not enabled on forks, where this job can only fail. A fork that
+    # wants the demo enables Pages and sets the repository variable DEPLOY_DEMO=true.
+    if: github.repository == 'dylanpersonguy/OpenCharts' || vars.DEPLOY_DEMO == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

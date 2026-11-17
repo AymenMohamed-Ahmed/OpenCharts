@@ -1,6 +1,7 @@
 import type { ExchangeClient } from "@nktkas/hyperliquid";
 import { MAX_PERP_BUILDER_FEE_TENTHS_BP, type BuilderParam } from "./config.ts";
 import type { HlMarket } from "./types.ts";
+import { pow10Neg } from "./symbols.ts";
 import type { PlaceOrderInput } from "../services/schemas.ts";
 
 /**
@@ -243,7 +244,7 @@ export function planOrder(input: HlPlaceOrderInput, ctx: PlanContext): OrderPlan
   const size = formatSz(input.quantity, market.szDecimals);
   const sizeNum = Number(size);
   if (!(sizeNum > 0)) {
-    const step = 10 ** -market.szDecimals;
+    const step = pow10Neg(market.szDecimals);
     throw new TradeError(
       `Size ${input.quantity} is below the smallest increment for ${market.displayName || market.symbol} (${step.toFixed(market.szDecimals)}).`,
     );

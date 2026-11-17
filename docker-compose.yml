@@ -1,0 +1,204 @@
+# OpenBroker platform: OpenCharts terminal + FastAPI backend.
+#
+# Network rules (enforced by backend/tests/test_compose_isolation.py):
+#   - Only `web` publishes a port, bound to 127.0.0.1 unless WEB_BIND_ADDR says otherwise.
+#   - `execution` sits only on exec_net, which is internal. The gateway is the only
+#     service that can call it, and its only way out is the allowlisting egress proxy.
+#   - `agents` shares no network with `execution`, the database or Redis.
+#   - Each container receives only its own secrets (no env_file, explicit lists).
+#
+# Start it with ./setup.sh, which validates .env and the port first.
+
+name: openbroker
+
+x-backend: &backend
+  image: openbroker-backend:local
+  build:
+    context: ./backend
+  restart: unless-stopped
+  read_only: true
+  tmpfs:
+    - /tmp
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: infra/web/Dockerfile
+      args:
+        VITE_ADAPTER: ${VITE_ADAPTER:-demo}
+        VITE_HL_NETWORK: ${PLATFORM_HL_NETWORK:-testnet}
+    image: openbroker-web:local
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "${WEB_BIND_ADDR:-127.0.0.1}:${WEB_PORT:-8080}:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - edge
+      - web_net
+
+  api:
+    <<: *backend
+    environment:
+      SERVICE: api
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      API_AUTH_TOKEN: ${API_AUTH_TOKEN:?set API_AUTH_TOKEN in .env}
+      EXECUTION_INTERNAL_TOKEN: ${EXECUTION_INTERNAL_TOKEN:?set EXECUTION_INTERNAL_TOKEN in .env}
+      EXECUTION_URL: http://execution:8000
+      AGENTS_URL: http://agents:8000
+      TRADING_ENABLED: ${TRADING_ENABLED:-false}
+      MAX_ORDER_NOTIONAL_USD: ${MAX_ORDER_NOTIONAL_USD:-100}
+      ALLOWED_SYMBOLS: ${ALLOWED_SYMBOLS:-}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-openbroker}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-openbroker}
+      REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}@redis:6379/0
+    depends_on:
+      execution:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - web_net
+      - agents_net
+      - data_net
+      - exec_net
+
+  agents:
+    <<: *backend
+    environment:
+      SERVICE: agents
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-claude-fable-5-2}
+    networks:
+      - agents_net
+      - llm_egress
+
+  ingestion:
+    <<: *backend
+    environment:
+      SERVICE: ingestion
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      HL_NETWORK: ${PLATFORM_HL_NETWORK:-testnet}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-openbroker}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-openbroker}
+      REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}@redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - data_net
+      - market_egress
+
+  execution:
+    <<: *backend
+    environment:
+      SERVICE: execution
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      EXECUTION_INTERNAL_TOKEN: ${EXECUTION_INTERNAL_TOKEN:?set EXECUTION_INTERNAL_TOKEN in .env}
+      BROKER: ${BROKER:-paper}
+      HL_NETWORK: ${PLATFORM_HL_NETWORK:-testnet}
+      HL_ACCOUNT_ADDRESS: ${HL_ACCOUNT_ADDRESS:-}
+      HL_AGENT_PRIVATE_KEY: ${HL_AGENT_PRIVATE_KEY:-}
+      LIVE_TRADING: ${LIVE_TRADING:-false}
+      HTTPS_PROXY: http://egress-proxy:3128
+      NO_PROXY: localhost,127.0.0.1
+    depends_on:
+      egress-proxy:
+        condition: service_started
+    networks:
+      - exec_net
+
+  egress-proxy:
+    image: ubuntu/squid:6.6-24.04_edge
+    restart: unless-stopped
+    volumes:
+      - ./infra/egress-proxy/squid.conf:/etc/squid/squid.conf:ro
+      - ./infra/egress-proxy/allowlist.txt:/etc/squid/allowlist.txt:ro
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - exec_net
+      - broker_egress
+
+  postgres:
+    image: timescale/timescaledb:2.17.2-pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-openbroker}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-openbroker}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - data_net
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\" --save '' --appendonly no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    read_only: true
+    tmpfs:
+      - /data
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - data_net
+
+networks:
+  # Host-facing. Only `web` joins it.
+  edge:
+  # web <-> api
+  web_net:
+    internal: true
+  # api <-> agents
+  agents_net:
+    internal: true
+  # api, ingestion <-> postgres, redis
+  data_net:
+    internal: true
+  # api <-> execution <-> egress-proxy. No route to the internet.
+  exec_net:
+    internal: true
+  # Outbound only: agents -> LLM providers
+  llm_egress:
+  # Outbound only: ingestion -> market data
+  market_egress:
+  # Outbound only: egress-proxy -> allowlisted broker hosts
+  broker_egress:
+
+volumes:
+  pgdata:

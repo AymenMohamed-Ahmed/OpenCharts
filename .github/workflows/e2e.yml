@@ -14,7 +14,9 @@ permissions:
 jobs:
   e2e:
     name: Typecheck, test, build, browser e2e
-    runs-on: ubuntu-latest
+    # Pinned: the Playwright version in package-lock.json cannot install Chromium on the
+    # image ubuntu-latest now points to (Ubuntu 26.04). Unpin when Playwright is upgraded.
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
 
     steps:

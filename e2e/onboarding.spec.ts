@@ -85,7 +85,9 @@ test.describe("wallet connect and one-time setup", () => {
 
     await page.reload();
     await waitForTerminal(page);
-    await expect(page.getByRole("button", { name: /^Wallet 0x/ })).toBeVisible();
+    // The top bar and the order ticket each render a wallet button; which of them is mounted
+    // right after a reload varies, so name the one this test is about.
+    await expect(page.getByTestId("hl-topbar").getByRole("button", { name: /^Wallet 0x/ })).toBeVisible();
     await expect(page.getByRole("dialog", { name: "Set up trading" })).toHaveCount(0);
     await expect(page.getByText("Setup needed")).toHaveCount(0);
     expect(hl.fake.actionsOfType("approveAgent")).toHaveLength(1); // no second approval
