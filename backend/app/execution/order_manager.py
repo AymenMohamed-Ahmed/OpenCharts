@@ -281,6 +281,12 @@ class OrderManager:
         return row
 
     async def cancel_all(self) -> CancelAllResult:
+        # Stop resending anything whose outcome is still unknown (a kill must
+        # not be followed by an order going out). If such an order did land,
+        # the venue-side cancel below, or the gateway's second pass, removes it.
+        for row in self._ledger.pending(self._broker.venue):
+            async with self._locked(row.client_order_id):
+                self._ledger.drop_request(row)
         return await self._broker.cancel_all()
 
     async def account(self) -> AccountState:

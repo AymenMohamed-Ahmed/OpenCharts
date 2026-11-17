@@ -53,7 +53,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # trust_env=False: calls to execution stay on the internal network and
     # must never be routed through a proxy picked up from the environment.
     app.state.execution_client = httpx.AsyncClient(
-        base_url=settings.execution_url, timeout=15.0, trust_env=False
+        # Longer than execution's worst case for one order (market data, then
+        # the order itself, 10 s each), so a slow venue is not reported as a 502.
+        base_url=settings.execution_url,
+        timeout=30.0,
+        trust_env=False,
     )
     app.state.risk_controls = (
         RiskControls(

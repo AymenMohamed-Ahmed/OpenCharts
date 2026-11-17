@@ -580,3 +580,18 @@ def test_rows_from_another_network_or_account_are_left_alone(tmp_path):
     assert status.status is OrderStatus.PENDING
     assert mainnet.fake.exchange_requests == []
     assert [i["type"] for i in mainnet.fake.info_requests] == ["meta"]
+
+
+def test_cancel_all_stops_resending_pending_orders(rig):
+    rig.fake.drop_next_request = 1
+
+    async def go():
+        await rig.start()
+        first = await rig.manager.submit(intent())
+        await rig.manager.cancel_all()
+        await rig.manager.reconcile_pending()
+        return first
+
+    assert run(go()).status is OrderStatus.PENDING
+    assert rig.fake.orders == {}
+    assert rig.manager._ledger.get("order-0001").request is None
