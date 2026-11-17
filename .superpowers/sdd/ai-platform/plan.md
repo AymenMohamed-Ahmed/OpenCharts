@@ -124,7 +124,7 @@ Dependencies to add: `hyperliquid-python-sdk` (0.24.x; pins `eth-account<0.14`),
 
 ## Bundle C: state
 
-Branch `feat/execution`, cut from `feat/platform-foundation`; PR into `dev`, stacked on PR 1.
+Branch `feat/execution`, cut from `feat/platform-foundation`; pushed, PR 3 into `dev`, stacked on PR 1. Not merged; CI is watched from the session that opened it.
 
 Contents:
 
