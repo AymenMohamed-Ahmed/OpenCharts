@@ -35,6 +35,11 @@ class ApiSettings(_Base):
     trading_enabled: bool = False
     max_order_notional_usd: float = 100.0
     allowed_symbols: str = ""
+    # New non-reduce-only orders are refused once equity is this far below the
+    # day's starting equity (00:00 UTC snapshot).
+    max_daily_loss_usd: float = Field(default=50.0, gt=0)
+    # Kill switch and resume. Must differ from the client and internal tokens.
+    admin_token: SecretStr | None = None
 
     database_url: SecretStr | None = None
     redis_url: SecretStr | None = None
@@ -42,6 +47,21 @@ class ApiSettings(_Base):
     @property
     def allowed_symbol_set(self) -> frozenset[str]:
         return frozenset(s.strip().upper() for s in self.allowed_symbols.split(",") if s.strip())
+
+    @model_validator(mode="after")
+    def _distinct_admin_token(self) -> "ApiSettings":
+        if self.admin_token is not None:
+            admin = self.admin_token.get_secret_value()
+            if not admin:
+                self.admin_token = None
+            elif admin in (
+                self.api_auth_token.get_secret_value(),
+                self.execution_internal_token.get_secret_value(),
+            ):
+                raise ValueError(
+                    "ADMIN_TOKEN must differ from API_AUTH_TOKEN and the internal token"
+                )
+        return self
 
 
 class AgentSettings(_Base):
