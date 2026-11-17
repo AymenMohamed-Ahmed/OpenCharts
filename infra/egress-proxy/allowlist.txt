@@ -1,0 +1,2 @@
+api.hyperliquid.xyz
+api.hyperliquid-testnet.xyz
