@@ -181,9 +181,11 @@ class HyperliquidSource(MarketDataSource):
                 async with websockets.connect(self.ws_url, open_timeout=15) as ws:
                     await self._subscribe(ws, coins, intervals)
                     backoff = 1.0
-                    yield Reconnected()
+                    # Before yielding: the consumer backfills on Reconnected, which can
+                    # take longer than the server's idle timeout.
                     pinger = asyncio.create_task(self._ping(ws))
                     try:
+                        yield Reconnected()
                         async for message in ws:
                             for event in self._decode(message, set(coins), set(intervals)):
                                 yield event

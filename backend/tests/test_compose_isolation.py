@@ -90,6 +90,12 @@ def test_web_reaches_only_the_gateway():
             BROKER_SECRETS | LLM_SECRETS | {"API_AUTH_TOKEN", "EXECUTION_INTERNAL_TOKEN"},
         ),
         ("api", BROKER_SECRETS | LLM_SECRETS),
+        (
+            "migrate",
+            BROKER_SECRETS
+            | LLM_SECRETS
+            | {"API_AUTH_TOKEN", "EXECUTION_INTERNAL_TOKEN", "REDIS_URL"},
+        ),
         ("web", BROKER_SECRETS | LLM_SECRETS | DATA_SECRETS | {"EXECUTION_INTERNAL_TOKEN"}),
     ],
 )
@@ -109,7 +115,7 @@ def test_no_service_uses_env_file_or_host_networking():
         assert not svc.get("privileged"), name
 
 
-@pytest.mark.parametrize("service", ["api", "agents", "ingestion", "execution", "web"])
+@pytest.mark.parametrize("service", ["api", "agents", "ingestion", "execution", "migrate", "web"])
 def test_app_containers_are_hardened(service):
     svc = SERVICES[service]
     assert svc["read_only"] is True
@@ -119,3 +125,15 @@ def test_app_containers_are_hardened(service):
 
 def test_web_build_args_carry_no_secrets():
     assert set(SERVICES["web"]["build"]["args"]) == {"VITE_ADAPTER", "VITE_HL_NETWORK"}
+
+
+def test_migrate_is_a_one_shot_on_the_data_network_only():
+    assert networks_of("migrate") == {"data_net"}
+    assert SERVICES["migrate"]["restart"] == "no"
+    assert SERVICES["migrate"]["command"] == ["python", "-m", "app.common.migrate"]
+
+
+@pytest.mark.parametrize("service", ["api", "ingestion"])
+def test_database_users_wait_for_migrations(service):
+    dep = SERVICES[service]["depends_on"]["migrate"]
+    assert dep == {"condition": "service_completed_successfully"}

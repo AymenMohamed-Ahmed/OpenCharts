@@ -72,8 +72,8 @@ class IngestionService:
             self._writer.add_quote(event)
             try:
                 await self._publisher.publish(event)
-            except Exception:
-                log.warning("redis publish failed", exc_info=True)
+            except Exception as exc:
+                log.warning("redis publish failed: %r", exc)
         elif isinstance(event, Candle):
             self._writer.add_candle(event)
         else:
@@ -96,8 +96,8 @@ class IngestionService:
             try:
                 await self.refresh_markets()
                 break
-            except Exception:
-                log.warning("market list unavailable; retrying", exc_info=True)
+            except Exception as exc:
+                log.warning("market list unavailable (%r); retrying in 5s", exc)
                 await asyncio.sleep(5)
         if not self.coins:
             raise RuntimeError("none of INGEST_COINS is listed; nothing to ingest")
