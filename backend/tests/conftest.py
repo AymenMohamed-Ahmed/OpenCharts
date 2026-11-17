@@ -43,19 +43,26 @@ def order(**overrides):
 
 @pytest.fixture
 def database_url():
-    """A real TimescaleDB, from TEST_DATABASE_URL; the test is skipped without one."""
+    """A fresh, empty database on the TimescaleDB in TEST_DATABASE_URL (skipped without one).
+
+    Each test gets its own database: dropping a schema under a live TimescaleDB
+    background scheduler can deadlock.
+    """
     import os
+    import uuid
 
     import psycopg
+    from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
     url = os.environ.get("TEST_DATABASE_URL")
     if not url:
         pytest.skip("TEST_DATABASE_URL not set")
+    name = f"t_{uuid.uuid4().hex[:12]}"
     with psycopg.connect(url, autocommit=True) as conn:
-        conn.execute("DROP SCHEMA public CASCADE")
-        conn.execute("CREATE SCHEMA public")
-        conn.execute("DROP EXTENSION IF EXISTS timescaledb CASCADE")
-    return url
+        conn.execute(f"CREATE DATABASE {name}")
+    yield make_conninfo(**{**conninfo_to_dict(url), "dbname": name})
+    with psycopg.connect(url, autocommit=True) as conn:
+        conn.execute(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)")
 
 
 class FakeRedis:
