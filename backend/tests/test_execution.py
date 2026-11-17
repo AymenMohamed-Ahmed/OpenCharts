@@ -92,3 +92,26 @@ def test_hyperliquid_mainnet_needs_live_trading_flag():
         ExecutionSettings(**creds, hl_network="mainnet")
     assert ExecutionSettings(**creds, hl_network="mainnet", live_trading=True).live_trading
     assert ExecutionSettings(**creds, hl_network="testnet").hl_api_url.endswith("testnet.xyz")
+
+
+def test_hyperliquid_service_wiring(monkeypatch):
+    """The service builds the Hyperliquid broker from settings; the fake exchange
+    stands in for the network."""
+    from app.execution import main
+    from app.execution.broker.hyperliquid import HyperliquidBroker
+    from tests.fake_hyperliquid import FakeHyperliquid
+    from tests.test_hyperliquid_broker import AGENT, AGENT_KEY, USER
+
+    monkeypatch.setenv("BROKER", "hyperliquid")
+    monkeypatch.setenv("HL_ACCOUNT_ADDRESS", USER)
+    monkeypatch.setenv("HL_AGENT_PRIVATE_KEY", AGENT_KEY)
+    fake = FakeHyperliquid(agent_address=AGENT, user=USER, clock=__import__("time").time)
+    monkeypatch.setattr(
+        main, "build_broker", lambda settings: HyperliquidBroker(settings, transport=fake)
+    )
+    with TestClient(app) as client:
+        body = client.post("/internal/orders", json=order(), headers=AUTH).json()
+        account = client.get("/internal/account", headers=AUTH).json()
+    assert body["status"] == "filled"
+    assert body["broker"] == "hyperliquid"
+    assert account["equity"] == 1000.0
