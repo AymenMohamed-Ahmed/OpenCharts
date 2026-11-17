@@ -71,7 +71,15 @@ export function priceTickSize(price: number | undefined, szDecimals: number): nu
     price !== undefined && price > 0
       ? allowedPriceDecimals(price, szDecimals)
       : Math.max(0, HL_MAX_PERP_DECIMALS - szDecimals);
-  return 10 ** -decimals;
+  return pow10Neg(decimals);
+}
+
+/**
+ * Exactly 10^-n as the nearest double. `10 ** -4` evaluates to
+ * 0.00009999999999999999 in V8, which then shows up as a tick size.
+ */
+export function pow10Neg(n: number): number {
+  return Number(`1e-${Math.max(0, Math.floor(n))}`);
 }
 
 /** Round `price` to the nearest multiple of `tick` (float-noise free). */
