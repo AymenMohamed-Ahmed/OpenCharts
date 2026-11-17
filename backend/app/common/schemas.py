@@ -37,10 +37,10 @@ class OrderIntent(BaseModel):
     client_order_id: str = Field(min_length=8, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
     symbol: str = Field(min_length=1, max_length=32)
     side: Side
-    quantity: float = Field(gt=0)
+    quantity: float = Field(gt=0, allow_inf_nan=False)
     order_type: OrderType = OrderType.MARKET
-    limit_price: float | None = Field(default=None, gt=0)
-    reference_price: float | None = Field(default=None, gt=0)
+    limit_price: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    reference_price: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     reduce_only: bool = False
 
     @model_validator(mode="after")

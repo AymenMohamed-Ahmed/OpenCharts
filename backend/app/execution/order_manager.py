@@ -81,10 +81,14 @@ class OrderManager:
     # ── lifecycle ───────────────────────────────────────────────────────────
 
     async def start(self, *, background: bool = True) -> None:
+        """With `background`, pending rows are reconciled by a task that starts
+        at once and repeats, so a slow venue cannot hold up start-up (and the
+        health check). Without it, one pass runs inline (tests)."""
         await self._broker.start()
-        await self.reconcile_pending()
         if background:
             self._reconciler = asyncio.create_task(self._reconcile_loop())
+        else:
+            await self.reconcile_pending()
 
     async def aclose(self) -> None:
         if self._reconciler is not None:
@@ -96,11 +100,11 @@ class OrderManager:
 
     async def _reconcile_loop(self) -> None:
         while True:
-            await asyncio.sleep(RECONCILE_INTERVAL_S)
             try:
                 await self.reconcile_pending()
-            except Exception:
-                log.exception("reconciliation pass failed")
+            except Exception as exc:
+                log.error("reconciliation pass failed (%s)", type(exc).__name__)
+            await asyncio.sleep(RECONCILE_INTERVAL_S)
 
     async def reconcile_pending(self) -> None:
         for row in self._ledger.pending():

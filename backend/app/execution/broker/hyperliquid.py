@@ -464,10 +464,11 @@ class HyperliquidBroker(Broker):
         for order in orders:
             coin = order.get("coin") if isinstance(order, dict) else None
             asset = self._assets.get(coin) if isinstance(coin, str) else None
-            if asset is None or "oid" not in order:
+            oid = order.get("oid") if isinstance(order, dict) else None
+            if asset is None or not isinstance(oid, int):
                 skipped.append(str(coin))
                 continue
-            cancels.append({"a": asset.index, "o": int(order["oid"])})
+            cancels.append({"a": asset.index, "o": oid})
 
         canceled = failed = 0
         errors: list[str] = []
