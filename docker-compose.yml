@@ -65,6 +65,8 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-openbroker}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-openbroker}
       REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}@redis:6379/0
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       execution:
         condition: service_healthy
       postgres:
@@ -76,6 +78,22 @@ services:
       - agents_net
       - data_net
       - exec_net
+
+  # One-shot: applies backend/app/migrations/*.sql, then exits. api and ingestion wait for it.
+  migrate:
+    <<: *backend
+    restart: "no"
+    command: ["python", "-m", "app.common.migrate"]
+    healthcheck:
+      disable: true
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-openbroker}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-openbroker}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - data_net
 
   agents:
     <<: *backend
@@ -95,9 +113,15 @@ services:
       SERVICE: ingestion
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       HL_NETWORK: ${PLATFORM_HL_NETWORK:-testnet}
+      INGEST_COINS: ${INGEST_COINS:-BTC,ETH}
+      INGEST_INTERVALS: ${INGEST_INTERVALS:-1m,1h}
+      INGEST_BACKFILL_DAYS: ${INGEST_BACKFILL_DAYS:-7}
+      QUOTE_RETENTION_DAYS: ${QUOTE_RETENTION_DAYS:-7}
       DATABASE_URL: postgresql://${POSTGRES_USER:-openbroker}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-openbroker}
       REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}@redis:6379/0
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:

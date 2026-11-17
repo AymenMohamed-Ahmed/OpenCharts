@@ -9,13 +9,18 @@ keys. tests/test_compose_isolation.py enforces that split.
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import SecretStr, model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 HL_API_URLS = {
     "mainnet": "https://api.hyperliquid.xyz",
     "testnet": "https://api.hyperliquid-testnet.xyz",
 }
+
+
+def _csv(value: str, *, upper: bool = True) -> list[str]:
+    items = [i.strip() for i in value.split(",") if i.strip()]
+    return list(dict.fromkeys(i.upper() if upper else i for i in items))
 
 
 class _Base(BaseSettings):
@@ -59,9 +64,28 @@ class IngestionSettings(_Base):
     database_url: SecretStr | None = None
     redis_url: SecretStr | None = None
 
+    ingest_coins: str = "BTC,ETH"
+    ingest_intervals: str = "1m,1h"
+    ingest_backfill_days: int = Field(default=7, ge=1, le=365)
+    quote_retention_days: int = Field(default=7, ge=1, le=3650)
+
     @property
     def hl_api_url(self) -> str:
         return HL_API_URLS[self.hl_network]
+
+    @property
+    def coins(self) -> list[str]:
+        return _csv(self.ingest_coins)
+
+    @property
+    def intervals(self) -> list[str]:
+        return _csv(self.ingest_intervals, upper=False)
+
+
+class MigrateSettings(_Base):
+    """The one-shot migrate service: database access only."""
+
+    database_url: SecretStr
 
 
 class ExecutionSettings(_Base):

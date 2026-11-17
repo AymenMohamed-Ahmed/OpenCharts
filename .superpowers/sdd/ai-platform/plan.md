@@ -31,12 +31,20 @@ Start here in a new session. Update this file as decisions land.
 | # | Bundle | Layer | Risk | Depends on | State |
 |---|---|---|---|---|---|
 | A | Foundation: CI fix, backend scaffold, Docker, compose, env, setup.sh | all | medium | none | pushed; PR 1 into `dev` |
-| B | Ingestion: Hyperliquid REST + websocket, TimescaleDB schema and migrations, Redis fan-out | backend | low | A | not started |
+| B | Ingestion: Hyperliquid REST + websocket, TimescaleDB schema and migrations, Redis fan-out | backend | low | A | pushed; PR into `dev` (stacked on PR 1) |
 | C | Execution: Hyperliquid signing and order placement, durable idempotency, order/fill store via gateway, daily-loss limit and kill switch | backend | high (money, keys) | A | not started |
 | D | Agents: LLM client, first strategy, propose → gateway flow, agent read access to market data | backend | medium | A, B | not started |
 | E | Terminal adapter: `OpenChartsAdapter` backed by the gateway (market data, trading, storage), token handling in the browser | front end | medium | B, C | not started |
 
 B and C are independent of each other and may run in parallel sessions. C gets the high-risk review.
+
+## Bundle B: state
+
+Branch `feat/ingestion`, from `feat/platform-foundation`. All seven handoff items built.
+
+Deviations from the handoff: migrations live in `backend/app/migrations/` (inside the package, so the image needs no Dockerfile change); `psycopg[binary,pool]` (pool extra for the gateway and ingestion); dev dependency `pytest-asyncio`; quotes are stored at most once per second per coin (Redis gets every tick); `quotes` retention is applied by ingestion on start with `QUOTE_RETENTION_DAYS` (the migration sets 7 days).
+
+Verified locally: ruff, format, 86 tests including the DB tests against TimescaleDB 2.17.2 (`TEST_DATABASE_URL`; skipped when unset); `./setup.sh` from clean with the sandbox override: `migrate` exits 0, re-run applies nothing, hypertables exist, the three market endpoints answer 200 (empty) through nginx and 401 without a token, `api` still reaches `execution`. Not verifiable here (no external DNS): live Hyperliquid REST and websocket; the `Backend` stack job checks one BTC candle on testnet (non-blocking).
 
 ## Bundle A: state
 
@@ -110,6 +118,14 @@ Scope:
 Out of scope: TP/SL, leverage and margin-mode changes (orders use the account's current setting; document it), modify-order, HIP-3, spot, Postgres order history (after B, in E).
 
 Dependencies to add: `hyperliquid-python-sdk` (0.24.x; pins `eth-account<0.14`), `eth-account` for the fake exchange in tests.
+
+## Follow-ups (bundle B)
+
+- Ingestion `/healthz` reports only that the process is up, not that the stream is live or how stale the last quote is; expose staleness for bundle D's agents.
+- Only core perps; `INGEST_COINS` entries not listed on the network are skipped with a warning.
+- The `api` imports `INTERVAL_MS` from `app.ingestion.sources.hyperliquid`; move it to `common` if the services are ever split into images.
+- Redis has no persistence, so `quote:<coin>` is empty after a Redis restart until the next tick.
+- No `l2Book`, trades tape, or streaming to the browser (bundle E).
 
 ## Follow-ups (deferred, bundle A)
 

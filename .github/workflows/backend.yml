@@ -18,6 +18,21 @@ jobs:
     name: Lint, test
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    services:
+      postgres:
+        image: timescale/timescaledb:2.17.2-pg16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test -d test"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      # Migration, store and market-endpoint tests run against this real TimescaleDB.
+      TEST_DATABASE_URL: postgresql://test:test@localhost:5432/test
     defaults:
       run:
         working-directory: backend
@@ -93,6 +108,30 @@ jobs:
         run: |
           docker compose exec -T execution python -c "import httpx
           httpx.post('https://api.hyperliquid-testnet.xyz/info', json={'type': 'meta'}, timeout=15).raise_for_status()"
+
+      - name: Migrations ran and the market endpoints answer
+        run: |
+          token="$(grep '^API_AUTH_TOKEN=' .env | cut -d= -f2)"
+          test "$(docker compose ps -a migrate --format '{{.ExitCode}}')" = 0
+          for p in symbols 'candles?coin=BTC&interval=1m' 'quotes?coins=BTC'; do
+            curl --fail --silent --show-error -H "Authorization: Bearer $token" "http://127.0.0.1:8080/api/v1/market/$p"
+            echo
+          done
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/api/v1/market/symbols)" = 401
+
+      # Needs Hyperliquid testnet, so it reports but does not fail the run.
+      - name: Ingestion stores a BTC candle from testnet
+        continue-on-error: true
+        run: |
+          token="$(grep '^API_AUTH_TOKEN=' .env | cut -d= -f2)"
+          for _ in $(seq 1 24); do
+            n="$(curl -s -H "Authorization: Bearer $token" 'http://127.0.0.1:8080/api/v1/market/candles?coin=BTC&interval=1m&limit=5' | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')"
+            if [ "${n:-0}" -gt 0 ]; then echo "BTC candles: $n"; exit 0; fi
+            sleep 5
+          done
+          echo "no BTC candle after 2 minutes" >&2
+          docker compose logs ingestion --no-color --tail 50
+          exit 1
 
       - name: Logs on failure
         if: failure()
