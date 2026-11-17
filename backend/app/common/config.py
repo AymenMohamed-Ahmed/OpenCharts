@@ -9,7 +9,7 @@ keys. tests/test_compose_isolation.py enforces that split.
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import SecretStr, model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 HL_API_URLS = {
@@ -27,6 +27,9 @@ class _Base(BaseSettings):
 class ApiSettings(_Base):
     """Gateway and risk gate."""
 
+    # Validation errors must not echo the input: it holds the tokens.
+    model_config = SettingsConfigDict(extra="ignore", hide_input_in_errors=True)
+
     api_auth_token: SecretStr
     execution_internal_token: SecretStr
     execution_url: str = "http://execution:8000"
@@ -35,6 +38,11 @@ class ApiSettings(_Base):
     trading_enabled: bool = False
     max_order_notional_usd: float = 100.0
     allowed_symbols: str = ""
+    # New non-reduce-only orders are refused once equity is this far below the
+    # day's starting equity (00:00 UTC snapshot).
+    max_daily_loss_usd: float = Field(default=50.0, gt=0)
+    # Kill switch and resume. Must differ from the client and internal tokens.
+    admin_token: SecretStr | None = None
 
     database_url: SecretStr | None = None
     redis_url: SecretStr | None = None
@@ -42,6 +50,21 @@ class ApiSettings(_Base):
     @property
     def allowed_symbol_set(self) -> frozenset[str]:
         return frozenset(s.strip().upper() for s in self.allowed_symbols.split(",") if s.strip())
+
+    @model_validator(mode="after")
+    def _distinct_admin_token(self) -> "ApiSettings":
+        if self.admin_token is not None:
+            admin = self.admin_token.get_secret_value()
+            if not admin:
+                self.admin_token = None
+            elif admin in (
+                self.api_auth_token.get_secret_value(),
+                self.execution_internal_token.get_secret_value(),
+            ):
+                raise ValueError(
+                    "ADMIN_TOKEN must differ from API_AUTH_TOKEN and the internal token"
+                )
+        return self
 
 
 class AgentSettings(_Base):
@@ -67,12 +90,20 @@ class IngestionSettings(_Base):
 class ExecutionSettings(_Base):
     """Broker execution. The only service that holds broker credentials."""
 
+    # Validation errors must not echo the input: it holds the agent key.
+    model_config = SettingsConfigDict(extra="ignore", hide_input_in_errors=True)
+
     execution_internal_token: SecretStr
     broker: Literal["paper", "hyperliquid"] = "paper"
     hl_network: Literal["mainnet", "testnet"] = "testnet"
     hl_account_address: str = ""
     hl_agent_private_key: SecretStr | None = None
     live_trading: bool = False
+    # Market orders: IOC this far through the mid. Also the band a caller's
+    # reference_price, or a marketable limit price, must fall within.
+    max_slippage_bps: int = Field(default=300, ge=1, le=5000)
+    # SQLite ledger on the `execdata` volume.
+    ledger_path: str = "/data/ledger.db"
 
     @property
     def hl_api_url(self) -> str:

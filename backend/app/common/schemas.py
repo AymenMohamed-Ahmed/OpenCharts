@@ -16,9 +16,18 @@ class OrderType(StrEnum):
 
 
 class OrderStatus(StrEnum):
+    # Sent, outcome not known yet (timeout, crash). Execution reconciles it with
+    # the venue; retry with the same client_order_id to read the outcome.
+    PENDING = "pending"
+    # Resting on the book.
     ACCEPTED = "accepted"
     FILLED = "filled"
+    CANCELED = "canceled"
     REJECTED = "rejected"
+
+    @property
+    def is_final(self) -> bool:
+        return self in (OrderStatus.FILLED, OrderStatus.CANCELED, OrderStatus.REJECTED)
 
 
 class OrderIntent(BaseModel):
@@ -28,10 +37,10 @@ class OrderIntent(BaseModel):
     client_order_id: str = Field(min_length=8, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
     symbol: str = Field(min_length=1, max_length=32)
     side: Side
-    quantity: float = Field(gt=0)
+    quantity: float = Field(gt=0, allow_inf_nan=False)
     order_type: OrderType = OrderType.MARKET
-    limit_price: float | None = Field(default=None, gt=0)
-    reference_price: float | None = Field(default=None, gt=0)
+    limit_price: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    reference_price: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     reduce_only: bool = False
 
     @model_validator(mode="after")
@@ -53,8 +62,35 @@ class OrderResult(BaseModel):
     status: OrderStatus
     broker: str
     broker_order_id: str | None = None
+    cloid: str | None = None
     filled_quantity: float = 0.0
     average_price: float | None = None
+    detail: str | None = None
+
+
+class Position(BaseModel):
+    symbol: str
+    # Signed: positive long, negative short.
+    size: float
+    entry_price: float | None = None
+    position_value: float = 0.0
+    unrealized_pnl: float = 0.0
+
+
+class AccountState(BaseModel):
+    broker: str
+    equity: float
+    margin_used: float = 0.0
+    withdrawable: float = 0.0
+    positions: list[Position] = Field(default_factory=list)
+
+
+class CancelAllResult(BaseModel):
+    broker: str
+    canceled: int = 0
+    failed: int = 0
+    # Open orders this service does not trade (spot, HIP-3) and so left alone.
+    skipped: list[str] = Field(default_factory=list)
     detail: str | None = None
 
 

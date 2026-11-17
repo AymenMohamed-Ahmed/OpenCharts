@@ -32,9 +32,48 @@ def test_paper_fill():
 def test_same_client_order_id_is_not_placed_twice():
     with TestClient(app) as client:
         first = client.post("/internal/orders", json=order(), headers=AUTH).json()
-        # Same id, different size: the stored result wins, no second order.
-        second = client.post("/internal/orders", json=order(quantity=5), headers=AUTH).json()
-    assert second == first
+        again = client.post("/internal/orders", json=order(), headers=AUTH).json()
+        # Same id, different order: refused, never placed.
+        conflict = client.post("/internal/orders", json=order(quantity=5), headers=AUTH)
+    assert again == first
+    assert conflict.status_code == 409
+
+
+def test_idempotency_survives_a_restart():
+    with TestClient(app) as client:
+        first = client.post("/internal/orders", json=order(), headers=AUTH).json()
+    with TestClient(app) as client:
+        assert client.get("/internal/orders/order-0001", headers=AUTH).json() == first
+        conflict = client.post("/internal/orders", json=order(quantity=5), headers=AUTH)
+    assert conflict.status_code == 409
+
+
+def test_order_status_cancel_account_and_cancel_all():
+    with TestClient(app) as client:
+        client.post("/internal/orders", json=order(), headers=AUTH)
+        assert client.get("/internal/orders/order-0001", headers=AUTH).json()["status"] == "filled"
+        cancel = client.post("/internal/orders/order-0001/cancel", headers=AUTH)
+        assert cancel.json()["status"] == "filled"  # nothing left to cancel
+        assert client.get("/internal/orders/unknown-0001", headers=AUTH).status_code == 404
+        assert client.post("/internal/orders/unknown-0001/cancel", headers=AUTH).status_code == 404
+        assert client.get("/internal/account", headers=AUTH).json()["equity"] > 0
+        assert client.post("/internal/cancel-all", headers=AUTH).json()["canceled"] == 0
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("get", "/internal/orders/order-0001"),
+        ("post", "/internal/orders/order-0001/cancel"),
+        ("post", "/internal/cancel-all"),
+        ("get", "/internal/account"),
+    ],
+)
+def test_every_internal_endpoint_needs_the_token(method, path):
+    with TestClient(app) as client:
+        assert getattr(client, method)(path).status_code == 401
+        bad = {"Authorization": "Bearer test-api-token"}
+        assert getattr(client, method)(path, headers=bad).status_code == 401
 
 
 def test_hyperliquid_needs_credentials():
@@ -55,10 +94,57 @@ def test_hyperliquid_mainnet_needs_live_trading_flag():
     assert ExecutionSettings(**creds, hl_network="testnet").hl_api_url.endswith("testnet.xyz")
 
 
-def test_hyperliquid_orders_report_not_implemented(monkeypatch):
+def test_hyperliquid_service_wiring(monkeypatch):
+    """The service builds the Hyperliquid broker from settings; the fake exchange
+    stands in for the network."""
+    from app.execution import main
+    from app.execution.broker.hyperliquid import HyperliquidBroker
+    from tests.fake_hyperliquid import FakeHyperliquid
+    from tests.test_hyperliquid_broker import AGENT, AGENT_KEY, USER
+
     monkeypatch.setenv("BROKER", "hyperliquid")
-    monkeypatch.setenv("HL_ACCOUNT_ADDRESS", "0x" + "1" * 40)
-    monkeypatch.setenv("HL_AGENT_PRIVATE_KEY", "0x" + "2" * 64)
+    monkeypatch.setenv("HL_ACCOUNT_ADDRESS", USER)
+    monkeypatch.setenv("HL_AGENT_PRIVATE_KEY", AGENT_KEY)
+    fake = FakeHyperliquid(agent_address=AGENT, user=USER, clock=__import__("time").time)
+    monkeypatch.setattr(
+        main, "build_broker", lambda settings: HyperliquidBroker(settings, transport=fake)
+    )
     with TestClient(app) as client:
-        response = client.post("/internal/orders", json=order(), headers=AUTH)
-    assert response.status_code == 501
+        body = client.post("/internal/orders", json=order(), headers=AUTH).json()
+        account = client.get("/internal/account", headers=AUTH).json()
+    assert body["status"] == "filled"
+    assert body["broker"] == "hyperliquid"
+    assert account["equity"] == 1000.0
+
+
+def test_ledger_refuses_an_unknown_schema(tmp_path):
+    import sqlite3
+
+    from app.execution.ledger import Ledger
+
+    path = tmp_path / "old.db"
+    db = sqlite3.connect(path)
+    db.execute("CREATE TABLE orders (client_order_id TEXT PRIMARY KEY)")
+    db.close()
+    with pytest.raises(RuntimeError, match="schema version 0"):
+        Ledger(path)
+    Ledger(tmp_path / "new.db").close()
+    Ledger(tmp_path / "new.db").close()  # re-opening its own schema is fine
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [{"hl_network": "mainnet"}, {"max_slippage_bps": "abc"}, {"hl_network": "devnet"}],
+)
+def test_settings_errors_never_echo_the_key(extra):
+    secret = "0x" + "5e" * 32
+    with pytest.raises(ValidationError) as excinfo:
+        ExecutionSettings(
+            execution_internal_token="internal-secret",
+            broker="hyperliquid",
+            hl_account_address="0x" + "1" * 40,
+            hl_agent_private_key=secret,
+            **extra,
+        )
+    assert "5e5e" not in str(excinfo.value)
+    assert "internal-secret" not in str(excinfo.value)

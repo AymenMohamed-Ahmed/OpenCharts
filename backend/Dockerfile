@@ -13,8 +13,11 @@ RUN uv sync --frozen --no-dev --no-editable
 FROM python:3.12-slim AS runtime
 ENV PATH="/opt/venv/bin:$PATH" PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 RUN groupadd --system --gid 10001 app \
- && useradd --system --uid 10001 --gid app --no-create-home --shell /usr/sbin/nologin app
+ && useradd --system --uid 10001 --gid app --no-create-home --shell /usr/sbin/nologin app \
+ && install -d -o 10001 -g 10001 -m 0700 /data
 COPY --from=builder /opt/venv /opt/venv
+# /data is the mount point of execution's ledger volume; a new named volume
+# copies this directory's owner, so the app user can write to it.
 USER 10001:10001
 EXPOSE 8000
 ENV SERVICE=api
