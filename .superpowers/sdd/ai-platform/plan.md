@@ -23,7 +23,7 @@ Start here in a new session. Update this file as decisions land.
 
 | # | Bundle | Layer | Risk | Depends on | State |
 |---|---|---|---|---|---|
-| A | Foundation: CI fix, backend scaffold, Docker, compose, env, setup.sh | all | medium | none | built and verified locally; not pushed (no push access yet) |
+| A | Foundation: CI fix, backend scaffold, Docker, compose, env, setup.sh | all | medium | none | pushed; PR 1 into `dev` |
 | B | Ingestion: Hyperliquid REST + websocket, TimescaleDB schema and migrations, Redis fan-out | backend | low | A | not started |
 | C | Execution: Hyperliquid signing and order placement, durable idempotency, order/fill store via gateway, daily-loss limit and kill switch | backend | high (money, keys) | A | not started |
 | D | Agents: LLM client, first strategy, propose → gateway flow, agent read access to market data | backend | medium | A, B | not started |
@@ -39,7 +39,9 @@ Contents: tick-size float fix (`src/hyperliquid/symbols.ts`, `orders.ts`), `back
 
 Verified locally: front-end typecheck, lint, 745 tests, build; backend ruff and 52 tests; `./setup.sh` from clean, re-run, `--check`, port conflict with and without `--auto-port`, non-loopback bind refusal, hyperliquid-without-credentials refusal; on the running stack: order path through nginx, risk rejections, agents cannot resolve execution or postgres, execution cannot reach the internet directly, proxy refuses a non-allowlisted host.
 
-Not verified: an allowlisted host through the proxy end to end (the build sandbox gives containers no external DNS; Squid accepted the request and failed at connect). The `Backend` workflow checks it on GitHub runners. The Playwright e2e workflow was not run.
+Verified on GitHub runners (PR 1): the same stack checks, plus an allowlisted Hyperliquid testnet call through the proxy, which the build sandbox could not do (no external DNS in containers).
+
+Also fixed in this bundle: the browser e2e workflow (runner pinned to ubuntu-24.04 because the locked Playwright cannot install Chromium on 26.04; one ambiguous locator in `e2e/onboarding.spec.ts` that failed about one run in three).
 
 To push: `git push -u origin dev feat/platform-foundation`, then open a PR from `feat/platform-foundation` into `dev`.
 
@@ -51,4 +53,5 @@ To push: `git push -u origin dev feat/platform-foundation`, then open a PR from 
 - Squid image is pinned by tag, not digest; base images likewise.
 - nginx serves plain HTTP; TLS termination is left to the host.
 - `uvicorn[standard]` pulls `websockets`/`watchfiles` that nothing uses yet.
+- Playwright is pinned to a version that does not support Ubuntu 26.04; upgrade it and unpin the e2e runner.
 - Upstream CI was red for the same tick-size bug; the fix could be offered upstream.
