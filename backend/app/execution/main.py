@@ -81,6 +81,8 @@ async def order_status(client_order_id: ClientOrderId, manager: Manager) -> Orde
 async def cancel_order(client_order_id: ClientOrderId, manager: Manager) -> OrderResult:
     try:
         return await manager.cancel(client_order_id)
+    except IdempotencyConflict as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail=str(exc)) from None
     except OrderNotFound:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="unknown client_order_id") from None
     except BrokerUnavailable as exc:

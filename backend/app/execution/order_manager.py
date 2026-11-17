@@ -107,7 +107,7 @@ class OrderManager:
             await asyncio.sleep(RECONCILE_INTERVAL_S)
 
     async def reconcile_pending(self) -> None:
-        for row in self._ledger.pending():
+        for row in self._ledger.pending(self._broker.venue):
             async with self._locked(row.client_order_id):
                 current = self._ledger.get(row.client_order_id)
                 if current is not None and current.status is OrderStatus.PENDING:
@@ -119,6 +119,7 @@ class OrderManager:
         async with self._locked(intent.client_order_id):
             row = self._ledger.get(intent.client_order_id)
             if row is not None:
+                self._same_venue(row)
                 if row.intent_hash != intent_hash(intent):
                     raise IdempotencyConflict(
                         f"client_order_id {intent.client_order_id} was already used for a "
@@ -139,6 +140,7 @@ class OrderManager:
                 intent,
                 cloid=cloid,
                 broker=self._broker.name,
+                venue=self._broker.venue,
                 coin=prepared.coin,
                 asset=prepared.asset,
                 request=prepared.request,
@@ -229,9 +231,18 @@ class OrderManager:
             return self._pending(row)
         return self._ledger.record(row, result).result()
 
+    def _same_venue(self, row: LedgerRow) -> None:
+        if row.venue != self._broker.venue:
+            raise IdempotencyConflict(
+                f"client_order_id {row.client_order_id} belongs to an order on {row.venue}, "
+                f"not {self._broker.venue}"
+            )
+
     async def status(self, client_order_id: str) -> OrderResult:
         async with self._locked(client_order_id):
             row = self._require(client_order_id)
+            if row.venue != self._broker.venue:
+                return row.result()  # recorded on another venue; nothing to ask here
             if row.status is OrderStatus.PENDING:
                 return await self._reconcile(row)
             if row.status is OrderStatus.ACCEPTED:
@@ -252,6 +263,7 @@ class OrderManager:
             row = self._require(client_order_id)
             if row.status.is_final:
                 return row.result()
+            self._same_venue(row)
             # Pending rows are cancelled too: if the order did land, the cancel
             # by cloid removes it.
             result = await self._broker.cancel(row)

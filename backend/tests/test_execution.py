@@ -115,3 +115,36 @@ def test_hyperliquid_service_wiring(monkeypatch):
     assert body["status"] == "filled"
     assert body["broker"] == "hyperliquid"
     assert account["equity"] == 1000.0
+
+
+def test_ledger_refuses_an_unknown_schema(tmp_path):
+    import sqlite3
+
+    from app.execution.ledger import Ledger
+
+    path = tmp_path / "old.db"
+    db = sqlite3.connect(path)
+    db.execute("CREATE TABLE orders (client_order_id TEXT PRIMARY KEY)")
+    db.close()
+    with pytest.raises(RuntimeError, match="schema version 0"):
+        Ledger(path)
+    Ledger(tmp_path / "new.db").close()
+    Ledger(tmp_path / "new.db").close()  # re-opening its own schema is fine
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [{"hl_network": "mainnet"}, {"max_slippage_bps": "abc"}, {"hl_network": "devnet"}],
+)
+def test_settings_errors_never_echo_the_key(extra):
+    secret = "0x" + "5e" * 32
+    with pytest.raises(ValidationError) as excinfo:
+        ExecutionSettings(
+            execution_internal_token="internal-secret",
+            broker="hyperliquid",
+            hl_account_address="0x" + "1" * 40,
+            hl_agent_private_key=secret,
+            **extra,
+        )
+    assert "5e5e" not in str(excinfo.value)
+    assert "internal-secret" not in str(excinfo.value)

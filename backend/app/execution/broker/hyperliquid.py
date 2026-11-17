@@ -154,6 +154,10 @@ class HyperliquidBroker(Broker):
         )
 
     @property
+    def venue(self) -> str:
+        return f"hyperliquid-{self._settings.hl_network}:{self._user}"
+
+    @property
     def agent_address(self) -> str:
         return self._wallet.address
 

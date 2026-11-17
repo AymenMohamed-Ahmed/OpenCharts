@@ -19,6 +19,7 @@ from typing import Any
 
 from app.common.schemas import OrderIntent, OrderResult, OrderStatus
 
+SCHEMA_VERSION = 1
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS orders (
     client_order_id TEXT PRIMARY KEY,
@@ -26,6 +27,7 @@ CREATE TABLE IF NOT EXISTS orders (
     intent_hash     TEXT NOT NULL,
     intent_json     TEXT NOT NULL,
     broker          TEXT NOT NULL,
+    venue           TEXT NOT NULL,
     coin            TEXT NOT NULL,
     asset           INTEGER,
     status          TEXT NOT NULL,
@@ -61,6 +63,9 @@ class LedgerRow:
     intent_hash: str
     intent_json: str
     broker: str
+    # Broker, network and account the order was sent to: a row is only ever
+    # reconciled, resent or cancelled against the same venue.
+    venue: str
     coin: str
     asset: int | None
     status: OrderStatus
@@ -110,7 +115,18 @@ class Ledger:
         self._db.row_factory = sqlite3.Row
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.execute("PRAGMA synchronous=FULL")
+        version = self._db.execute("PRAGMA user_version").fetchone()[0]
+        has_table = self._db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'orders'"
+        ).fetchone()
+        if has_table and version != SCHEMA_VERSION:
+            self._db.close()
+            raise RuntimeError(
+                f"ledger {path} has schema version {version}, expected {SCHEMA_VERSION}; "
+                "refusing to start rather than guess"
+            )
         self._db.executescript(_SCHEMA)
+        self._db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
     def close(self) -> None:
         self._db.close()
@@ -127,10 +143,10 @@ class Ledger:
         cur = self._db.execute("SELECT * FROM orders WHERE client_order_id = ?", (client_order_id,))
         return self._row(cur.fetchone())
 
-    def pending(self) -> list[LedgerRow]:
+    def pending(self, venue: str) -> list[LedgerRow]:
         cur = self._db.execute(
-            "SELECT * FROM orders WHERE status = ? ORDER BY created_at_ms",
-            (OrderStatus.PENDING.value,),
+            "SELECT * FROM orders WHERE status = ? AND venue = ? ORDER BY created_at_ms",
+            (OrderStatus.PENDING.value, venue),
         )
         return [row for r in cur.fetchall() if (row := self._row(r)) is not None]
 
@@ -140,6 +156,7 @@ class Ledger:
         *,
         cloid: str,
         broker: str,
+        venue: str,
         coin: str,
         asset: int | None,
         request: dict[str, Any] | None,
@@ -147,15 +164,16 @@ class Ledger:
     ) -> LedgerRow:
         now = _now_ms()
         self._db.execute(
-            "INSERT INTO orders (client_order_id, cloid, intent_hash, intent_json, broker, coin,"
-            " asset, status, request_json, expires_at_ms, created_at_ms, updated_at_ms)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO orders (client_order_id, cloid, intent_hash, intent_json, broker, venue,"
+            " coin, asset, status, request_json, expires_at_ms, created_at_ms, updated_at_ms)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 intent.client_order_id,
                 cloid,
                 intent_hash(intent),
                 intent.model_dump_json(),
                 broker,
+                venue,
                 coin,
                 asset,
                 OrderStatus.PENDING.value,

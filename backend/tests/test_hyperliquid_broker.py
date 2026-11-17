@@ -316,6 +316,7 @@ def test_crash_between_ledger_write_and_send_is_recovered_on_start(rig):
             intent(),
             cloid=prepared.cloid,
             broker="hyperliquid",
+            venue=rig.manager._broker.venue,
             coin=prepared.coin,
             asset=prepared.asset,
             request=prepared.request,
@@ -544,3 +545,38 @@ def test_redaction():
     message = humanize_hl_error("Some brand new failure " + "x" * 500)
     assert message.startswith("Hyperliquid rejected the order: Some brand new failure")
     assert len(message) < 260
+
+
+def test_rows_from_another_network_or_account_are_left_alone(tmp_path):
+    testnet = Rig(tmp_path)
+    testnet.fake.drop_next_request = 1
+
+    async def on_testnet():
+        await testnet.start()
+        await testnet.manager.submit(intent())  # pending on testnet
+        await testnet.manager.submit(
+            intent(
+                client_order_id="resting-0001",
+                order_type="limit",
+                limit_price=49000,
+                reference_price=None,
+            )
+        )
+        testnet.manager._ledger.close()
+
+    run(on_testnet())
+    mainnet = Rig(tmp_path, mainnet=True)
+
+    async def on_mainnet():
+        await mainnet.start()  # reconciles only mainnet rows
+        status = await mainnet.manager.status("order-0001")
+        with pytest.raises(IdempotencyConflict, match="hyperliquid-testnet"):
+            await mainnet.manager.submit(intent())
+        with pytest.raises(IdempotencyConflict):
+            await mainnet.manager.cancel("resting-0001")
+        return status
+
+    status = run(on_mainnet())
+    assert status.status is OrderStatus.PENDING
+    assert mainnet.fake.exchange_requests == []
+    assert [i["type"] for i in mainnet.fake.info_requests] == ["meta"]

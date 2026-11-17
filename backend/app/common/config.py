@@ -27,6 +27,9 @@ class _Base(BaseSettings):
 class ApiSettings(_Base):
     """Gateway and risk gate."""
 
+    # Validation errors must not echo the input: it holds the tokens.
+    model_config = SettingsConfigDict(extra="ignore", hide_input_in_errors=True)
+
     api_auth_token: SecretStr
     execution_internal_token: SecretStr
     execution_url: str = "http://execution:8000"
@@ -86,6 +89,9 @@ class IngestionSettings(_Base):
 
 class ExecutionSettings(_Base):
     """Broker execution. The only service that holds broker credentials."""
+
+    # Validation errors must not echo the input: it holds the agent key.
+    model_config = SettingsConfigDict(extra="ignore", hide_input_in_errors=True)
 
     execution_internal_token: SecretStr
     broker: Literal["paper", "hyperliquid"] = "paper"

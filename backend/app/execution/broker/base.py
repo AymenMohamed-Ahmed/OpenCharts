@@ -41,6 +41,12 @@ class Broker(ABC):
 
     name: str
 
+    @property
+    def venue(self) -> str:
+        """Where orders go: broker, network and account. Ledger rows from another
+        venue (a changed network or account on the same volume) are left alone."""
+        return self.name
+
     async def start(self) -> None:  # noqa: B027 - optional hook
         """Load reference data and start background work."""
 

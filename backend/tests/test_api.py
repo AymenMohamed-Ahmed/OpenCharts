@@ -225,12 +225,13 @@ def test_admin_disabled_without_a_token(client, monkeypatch):
 
 @pytest.mark.parametrize("token", ["test-api-token", "test-internal-token"])
 def test_admin_token_must_be_distinct(token):
-    with pytest.raises(ValidationError, match="ADMIN_TOKEN"):
+    with pytest.raises(ValidationError, match="ADMIN_TOKEN") as excinfo:
         ApiSettings(
             api_auth_token="test-api-token",
             execution_internal_token="test-internal-token",
             admin_token=token,
         )
+    assert token not in str(excinfo.value)
 
 
 # ── daily-loss limit ────────────────────────────────────────────────────────
