@@ -71,6 +71,32 @@ jobs:
           test "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' -d "$body" "$url")" = 401
           test "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' -H "Authorization: Bearer $token" -d "$body" "$url")" = 422
 
+      - name: Kill switch needs the admin token; resume and status work
+        run: |
+          admin="$(grep '^ADMIN_TOKEN=' .env | cut -d= -f2)"
+          api="$(grep '^API_AUTH_TOKEN=' .env | cut -d= -f2)"
+          base=http://127.0.0.1:8080/api/v1/admin
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $api" "$base/kill")" = 401
+          curl --fail --silent --show-error -X POST -H "Authorization: Bearer $admin" "$base/kill" | grep -q '"trading":"killed"'
+          curl --fail --silent --show-error -X POST -H "Authorization: Bearer $admin" "$base/resume" | grep -q '"trading":"armed"'
+          curl --fail --silent --show-error -H "Authorization: Bearer $admin" "$base/status" | grep -q '"start_equity"'
+
+      - name: Execution's ledger survives a restart
+        run: |
+          place='import httpx, os
+          h = {"Authorization": "Bearer " + os.environ["EXECUTION_INTERNAL_TOKEN"]}
+          o = {"client_order_id": "ci-ledger-0001", "symbol": "BTC", "side": "buy", "quantity": 0.001, "order_type": "market", "reference_price": 50000}
+          r = httpx.post("http://127.0.0.1:8000/internal/orders", json=o, headers=h)
+          assert r.json()["status"] == "filled", r.text'
+          check='import httpx, os
+          h = {"Authorization": "Bearer " + os.environ["EXECUTION_INTERNAL_TOKEN"]}
+          r = httpx.get("http://127.0.0.1:8000/internal/orders/ci-ledger-0001", headers=h)
+          assert r.status_code == 200 and r.json()["status"] == "filled", r.text'
+          docker compose exec -T execution python -c "$place"
+          docker compose restart execution
+          docker compose up --detach --wait --wait-timeout 60 execution
+          docker compose exec -T execution python -c "$check"
+
       - name: Execution has no direct route out; the proxy refuses other hosts
         run: |
           probe() { docker compose exec -T "$1" python -c "$2"; }

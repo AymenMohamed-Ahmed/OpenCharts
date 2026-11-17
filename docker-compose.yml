@@ -62,6 +62,8 @@ services:
       TRADING_ENABLED: ${TRADING_ENABLED:-false}
       MAX_ORDER_NOTIONAL_USD: ${MAX_ORDER_NOTIONAL_USD:-100}
       ALLOWED_SYMBOLS: ${ALLOWED_SYMBOLS:-}
+      MAX_DAILY_LOSS_USD: ${MAX_DAILY_LOSS_USD:-50}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?set ADMIN_TOKEN in .env}
       DATABASE_URL: postgresql://${POSTGRES_USER:-openbroker}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-openbroker}
       REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}@redis:6379/0
     depends_on:
@@ -117,8 +119,13 @@ services:
       HL_ACCOUNT_ADDRESS: ${HL_ACCOUNT_ADDRESS:-}
       HL_AGENT_PRIVATE_KEY: ${HL_AGENT_PRIVATE_KEY:-}
       LIVE_TRADING: ${LIVE_TRADING:-false}
+      MAX_SLIPPAGE_BPS: ${MAX_SLIPPAGE_BPS:-300}
+      LEDGER_PATH: /data/ledger.db
       HTTPS_PROXY: http://egress-proxy:3128
       NO_PROXY: localhost,127.0.0.1
+    # The order ledger: the only writable path besides /tmp.
+    volumes:
+      - execdata:/data
     depends_on:
       egress-proxy:
         condition: service_started
@@ -202,3 +209,5 @@ networks:
 
 volumes:
   pgdata:
+  # Execution's order ledger (SQLite). Mounted by execution only.
+  execdata:

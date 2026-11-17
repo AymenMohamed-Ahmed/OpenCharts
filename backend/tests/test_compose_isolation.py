@@ -83,14 +83,27 @@ def test_web_reaches_only_the_gateway():
 @pytest.mark.parametrize(
     ("service", "forbidden"),
     [
-        ("agents", BROKER_SECRETS | DATA_SECRETS | {"API_AUTH_TOKEN", "EXECUTION_INTERNAL_TOKEN"}),
-        ("execution", LLM_SECRETS | DATA_SECRETS | {"API_AUTH_TOKEN"}),
+        (
+            "agents",
+            BROKER_SECRETS
+            | DATA_SECRETS
+            | {"API_AUTH_TOKEN", "EXECUTION_INTERNAL_TOKEN", "ADMIN_TOKEN"},
+        ),
+        ("execution", LLM_SECRETS | DATA_SECRETS | {"API_AUTH_TOKEN", "ADMIN_TOKEN"}),
         (
             "ingestion",
-            BROKER_SECRETS | LLM_SECRETS | {"API_AUTH_TOKEN", "EXECUTION_INTERNAL_TOKEN"},
+            BROKER_SECRETS
+            | LLM_SECRETS
+            | {"API_AUTH_TOKEN", "EXECUTION_INTERNAL_TOKEN", "ADMIN_TOKEN"},
         ),
         ("api", BROKER_SECRETS | LLM_SECRETS),
-        ("web", BROKER_SECRETS | LLM_SECRETS | DATA_SECRETS | {"EXECUTION_INTERNAL_TOKEN"}),
+        (
+            "web",
+            BROKER_SECRETS
+            | LLM_SECRETS
+            | DATA_SECRETS
+            | {"EXECUTION_INTERNAL_TOKEN", "ADMIN_TOKEN"},
+        ),
     ],
 )
 def test_secrets_stay_in_their_own_container(service, forbidden):
@@ -100,6 +113,26 @@ def test_secrets_stay_in_their_own_container(service, forbidden):
 def test_broker_key_is_held_by_execution_only():
     holders = [name for name in SERVICES if "HL_AGENT_PRIVATE_KEY" in env_of(name)]
     assert holders == ["execution"]
+
+
+def test_admin_token_is_held_by_the_gateway_only():
+    holders = [name for name in SERVICES if "ADMIN_TOKEN" in env_of(name)]
+    assert holders == ["api"]
+    assert SERVICES["api"]["environment"]["ADMIN_TOKEN"].startswith("${ADMIN_TOKEN:?")
+
+
+def volumes_of(service: str) -> list[str]:
+    return [str(v) for v in SERVICES[service].get("volumes", [])]
+
+
+def test_execution_ledger_volume_is_private_to_execution():
+    assert "execdata" in COMPOSE["volumes"]
+    assert volumes_of("execution") == ["execdata:/data"]
+    users = [name for name in SERVICES if any(v.startswith("execdata:") for v in volumes_of(name))]
+    assert users == ["execution"]
+    assert SERVICES["execution"]["environment"]["LEDGER_PATH"].startswith("/data/")
+    # Still read-only apart from the ledger and /tmp.
+    assert SERVICES["execution"]["read_only"] is True
 
 
 def test_no_service_uses_env_file_or_host_networking():
